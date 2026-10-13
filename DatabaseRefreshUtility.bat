@@ -1,7 +1,7 @@
 @echo off
 setlocal
 title Database Refresh Utility
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0scripts\Start-OracleRefreshUI.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0scripts\Start-DatabaseRefreshUtilityUI.ps1"
 set "exitCode=%errorlevel%"
 if not "%exitCode%"=="0" (
     echo.

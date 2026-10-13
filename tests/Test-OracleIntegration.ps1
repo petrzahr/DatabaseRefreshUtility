@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 param([string]$Config = $env:ORACLE_REFRESH_INTEGRATION_CONFIG, [string]$Scenario = '*')
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot/../scripts/OracleRefresh.ps1"
+. "$PSScriptRoot/../scripts/DatabaseRefreshUtility.ps1"
 if (-not $Config) { Write-Host 'SKIP: 11 Oracle integration scenarios; set ORACLE_REFRESH_INTEGRATION_CONFIG for a disposable ORF_TEST_* schema.'; exit 0 }
 $settings = Read-OrfJson ([IO.Path]::GetFullPath($Config))
 $db = Copy-OrfValue $settings

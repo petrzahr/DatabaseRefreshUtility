@@ -2,8 +2,8 @@
 # The worker has its own runspace; the UI thread only polls its streams.
 function Start-OrfUiJob {
     param([string]$ProjectRoot, [ValidateSet('capture','preflight','restore','validate')][string]$Action, [string]$Snapshot)
-    $engine = Join-Path $ProjectRoot 'scripts/OracleRefresh.ps1'
-    if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { throw 'Missing scripts/OracleRefresh.ps1.' }
+    $engine = Join-Path $ProjectRoot 'scripts/DatabaseRefreshUtility.ps1'
+    if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { throw 'Missing scripts/DatabaseRefreshUtility.ps1.' }
     $worker = [PowerShell]::Create()
     $code = {
         param($Engine, $Action, $Snapshot, $Root)

@@ -1,38 +1,24 @@
-# Oracle TEST: capture → DBA refresh → preflight → restore
+# Database Refresh Utility
 
-Nástroj zachová vybrané nastavení TEST databáze a obnoví je po refreshi provedeném DBA. Samotný refresh nespouští. Vyžaduje **Windows PowerShell 5.1**, stávající SQL*Plus a Oracle 19c+. Python, Oracle knihovny pro Python ani dodatečné PowerShell moduly nejsou potřeba. Implementace je v `scripts/OracleRefresh.ps1`; čtyři vstupní skripty ji načítají přímo.
+**Česky** | [English](README.en.md)
 
-Předpokladem je stejné prostředí a Windows účet, pod kterým funguje ruční `sqlplus APP1/"heslo"@TESTDB`. Alias se vyhodnocuje obvyklým Oracle klientem, například pomocí `tnsnames.ora` a `TNS_ADMIN`. Skript spouští `sqlplus.exe -L -S /nolog` bez okna a CONNECT předává přes standardní vstup. PowerShell execution policy musí dovolovat spuštění skriptů podle pravidel serveru; nástroj ji nemění ani neobchází.
+Nástroj uloží vybrané nastavení TEST databáze před refreshem a potom je obnoví. **Samotný refresh provádí DBA.**
 
-```powershell
-$PSVersionTable.PSVersion
-Get-Command sqlplus.exe
-```
+Postup: **Capture → refresh od DBA → Preflight → Restore → Validate**.
 
-## Konfigurace
+## 1. Co potřebuješ
 
-1. Zkopírujte `config/database.example.json` na `config/database.json` a doplňte připojení a hesla. Připojení i účty jsou v tomto jediném souboru.
-2. Zkopírujte požadované `config/schemas/*.example.json` na soubory bez `.example`. Příklady mohou zůstat na místě; při načítání se ignorují.
-3. V `schemaOrder` uveďte všechna používaná schémata právě jednou, v pořadí obnovy. Název `CT.json` vybere účet `users.CT`; jeho `username` musí být `CT`.
+- Windows PowerShell 5.1, SQL*Plus a Oracle 19c nebo novější.
+- Funkční připojení přes SQL*Plus pod stejným Windows účtem, který spouští nástroj.
+- Povolené spouštění PowerShell skriptů podle pravidel serveru. Další moduly ani Python nejsou potřeba.
 
-```json
-{
-  "host": "db-server.example.cz",
-  "port": 1521,
-  "serviceName": "testpdb.example.cz",
-  "sqlplusPath": "sqlplus.exe",
-  "schemaOrder": ["APP1", "APP2", "CT"],
-  "users": {
-    "APP1": { "username": "APP1", "password": "DOPLNTE_HESLO_APP1" },
-    "APP2": { "username": "APP2", "password": "DOPLNTE_HESLO_APP2" },
-    "CT": { "username": "CT", "password": "DOPLNTE_HESLO_CT" }
-  }
-}
-```
+## 2. Nastav připojení
 
-Pro přímé připojení zadejte `host` (server nebo IP), `port` a `serviceName`. Vynechaný port má výchozí hodnotu 1521. Service name je název služby používaný při připojení, nikoli název uživatele. SQL*Plus dostane adresu ve tvaru `//host:port/serviceName`.
+Zkopíruj `config/database.example.json` jako `config/database.json`. Doplň účty a vyber jednu variantu připojení.
 
-Příklad kompletní konfigurace pro existující TNS alias:
+### Přes TNS alias
+
+Alias `TESTDB` musí znát použitý Oracle klient, například přes `tnsnames.ora` nebo `TNS_ADMIN`. **Neuváděj `port` ani `serviceName`.**
 
 ```json
 {
@@ -46,74 +32,70 @@ Příklad kompletní konfigurace pro existující TNS alias:
 }
 ```
 
-U TNS aliasu neuvádějte `port` ani `serviceName`: ty se načtou z nastavení Oracle klienta. `host` přijímá také kompletní adresu `server:1521/service` nebo `//server:1521/service` bez samostatného portu/služby. Samotný název serveru bez služby se vyhodnocuje jako připojovací alias Oracle klienta. `sqlplusPath` může být plná cesta k `sqlplus.exe`; při vynechání se použije `sqlplus.exe` z PATH. Volitelný `timeoutSeconds` má výchozí hodnotu 300.
-
-`expectedTarget`, `dbUniqueName` a `conName` se již nenastavují. Cíl určuje připojení; nástroj nezávisle neověřuje identitu databáze. Každé spojení stále ověřuje přihlášený účet před pracovními dotazy. Snapshot a restore plán jsou vázané na připojovací adresu/alias a konfiguraci kroků; změna serveru, portu či služby vyžaduje nový Capture. Změnu cíle uvnitř stejného TNS aliasu tato vazba nedetekuje.
-
-Při přechodu ze dvou souborů přesuňte objekt `users` z `credentials.json` do `database.json`, přejmenujte `tnsAlias` na `host` (nebo zadejte server/port/službu) a odstraňte `expectedTarget`. Soubor `credentials.json` se již nečte. Před dalším refreshem vytvořte nový Capture; staré snapshoty mají jiný otisk konfigurace. Hesla nejsou součástí otisku, takže jejich změna nový Capture nevyžaduje. `database.json` je ignorovaný Gitem.
-
-Účty používají vlastní tabulky. Kontrola cizích klíčů čte `ALL_CONSTRAINTS` a `USER_CONSTRAINTS`; přístup k `SYS.DBA_CONSTRAINTS` není potřeba. Podporované prostředí nemá příchozí cizí klíče mezi různými schématy. Vazby uvnitř schématu se kontrolují automaticky. Nepřístupné externí vazby tento účet nemusí vidět; jejich nepřítomnost je předpokladem nasazení, nikoli výsledkem kontroly. Aktivní triggery na konfigurovaných tabulkách musí před obnovou vyřešit DBA; nástroj je sám nevypíná.
-
-## Kroky ve schématu
-
-Každý soubor obsahuje neprázdné pole `steps`. Kompletní vzory všech variant jsou níže v tomto dokumentu.
+### Přímo přes server a službu
 
 ```json
 {
-  "steps": [
-    {"type": "replaceTable", "table": "USERS", "allRows": true},
-    {"type": "replaceTable", "table": "USERGROUPS", "allRows": true}
-  ]
+  "host": "db-server.example.cz",
+  "port": 1521,
+  "serviceName": "testpdb.example.cz",
+  "sqlplusPath": "sqlplus.exe",
+  "schemaOrder": ["APP1"],
+  "users": {
+    "APP1": {"username": "APP1", "password": "DOPLNTE_HESLO"}
+  }
 }
 ```
 
-Všechny `replaceTable` se nejprve mažou v opačném pořadí konfigurace (i bez FK), potom vkládají v uvedeném pořadí. Zde tedy DELETE `USERGROUPS → USERS`, INSERT `USERS → USERGROUPS`, vše v jedné transakci schématu.
+`sqlplusPath` může být plná cesta ke klientovi. Výchozí hodnoty jsou `sqlplus.exe`, port `1521` a timeout `300` sekund pro jedno volání SQL*Plus. `host` přijímá i `//server:1521/sluzba` bez samostatného portu a služby.
 
-### Jednotný výběr a explicitní klíče
+## 3. Nastav operace pro každé schéma
 
-- Vždy zadejte právě jedno z `match` nebo `"allRows": true`. Chybějící výběr, prázdné `match`, `allRows: false` i kombinace obou polí jsou chybou.
-- `match` je neprázdné pole objektů. Každý objekt obsahuje přesně sloupce z `key`. Sloupce uvnitř objektu jsou spojené AND, objekty OR. Opakovaná podmínka nevybere řádek vícekrát.
-- Kde je `match`, je povinný explicitní `key`. Primární klíč se nikdy automaticky nezjišťuje. U `restoreRows` a `insert` identifikuje jeden řádek a musí být jedinečný a neprázdný ve vybraných datech. U `update`, `delete` a `backupTable` určuje sloupce podmínky a může odpovídat libovolnému počtu řádků. Může být složený; databázový constraint není potřeba.
-- `match` obsahuje hodnoty sloupců uvedených v `key`. U `update`, `delete` a `backupTable` jsou povoleny i `null` a prázdný řetězec (Oracle `IS NULL`). U `restoreRows` a `insert` jsou prázdné a NULL klíče zakázané. Volné SQL, LIKE, rozsahy ani jiné operátory nejsou podporovány.
-- Nulový výběr je platný. Počty se vypisují do logu. Pole `keyValues`, `maxRows`, `backupMaxRows`, `maxInsertRows`, `maxDeleteRows` a `expectedRows` byla odstraněna a při načtení vyvolají chybu. Neznámá pole kroků se také odmítají.
-- Hodnoty sloupců jsou řetězce, čísla nebo `null`; boolean používejte pouze pro `allRows`. Názvy tabulek a sloupců se normalizují na velká písmena; quoted identifiers nejsou podporovány.
+Pro účet `APP1` vytvoř `config/schemas/APP1.json`. Název souboru, položka v `schemaOrder` a `username` musí odpovídat. `schemaOrder` musí obsahovat všechna nakonfigurovaná schémata právě jednou, v pořadí obnovy. Soubory `*.example.json` se ignorují.
 
-| Typ | Výběr | `key` | Další povinná pole | Chování při Restore |
-| --- | --- | --- | --- | --- |
-| `backupTable` | `match` nebo `allRows` | Jen s `match` | — | Žádná obnova; Preflight a Validate tabulku také přeskočí. |
-| `restoreRows` | `match` nebo `allRows` | Vždy | `columns` | Obnoví původní hodnoty sloupců podle zachycených klíčů. Chybějící řádky přeskočí s upozorněním, nové ponechá. |
-| `replaceTable` | Pouze `allRows` | Nepoužívá | — | Smaže celý aktuální obsah a vloží celý zachycený obsah. |
-| `insert` | `match` nebo `allRows` | Vždy | — | Vloží chybějící zachycené řádky, shodné přeskočí; stejný klíč s jinými hodnotami je konflikt. |
-| `update` | `match` nebo `allRows` | Vždy | `set` | Nastaví pevné hodnoty řádkům vybraným po refreshi; klíče uloží do plánu pro opakování. |
-| `delete` | `match` nebo `allRows` | Jen s `match` | — | Smaže všechny řádky odpovídající podmínce, nebo celý aktuální obsah tabulky. |
+Soubor schématu obsahuje pole `steps`. Kroky pro různé tabulky můžeš spojit do jednoho pole. Hesla patří jen do `database.json`.
 
-U `backupTable`, `replaceTable` a `delete` s `allRows` se `key` neuvádí a nástroj jej odmítá jako nepoužívaný. `columns` patří pouze k `restoreRows`, `set` pouze k `update`. Klíčové sloupce nesmějí být v `columns` ani `set`.
+### Jak se vybírají řádky
 
-`backupTable`, `restoreRows`, `replaceTable` a `insert` nelze kombinovat s jiným krokem pro stejnou tabulku. Více UPDATE/DELETE na stejné tabulce je možné, ale všechny UPDATE musí používat stejný seznam klíčů. Překrývající se UPDATE a DELETE zasahující řádky potřebné pro validaci UPDATE preflight odmítne.
+| Pole | Význam |
+| --- | --- |
+| `type` | Operace, kterou chceš provést. |
+| `table` | Tabulka ve schématu přihlášeného účtu. |
+| `key` | Sloupce pro výběr nebo identifikaci řádků. Nikdy se automaticky nepřebírá primární klíč. |
+| `match` | Pole podmínek; každý objekt obsahuje přesně sloupce z `key`. |
+| `allRows` | Hodnota `true` vybírá všechny řádky. |
+| `columns` | Sloupce, jejichž původní hodnoty obnoví `restoreRows`. |
+| `set` | Pevné hodnoty, které nastaví `update`. |
 
-`backupTable`, `restoreRows` a `insert` vybírají řádky při Capture. `update` a `delete` pracují s databází po refreshi. `delete` s `allRows` provádí při každém spuštění `DELETE FROM tabulka`, takže smaže i nově přidané řádky. DELETE s `match` při každém spuštění maže zadané klíče; jejich nepřítomnost není chyba.
+Vždy použij **buď `match`, nebo `"allRows": true`**. Uvnitř jednoho objektu `match` platí AND, mezi objekty OR. Prázdný výběr je v pořádku; prázdné pole `match` je chyba.
 
-`insert` zachytí všechny podporované uložené sloupce vybraných řádků. Pro navázané INSERT kroky uveďte rodiče před dětmi. Identity a neviditelné sloupce se u `insert` a `replaceTable` odmítají; virtuální sloupce se nevkládají.
+**Unikátnost záleží na operaci:**
 
-### Rozsah kontroly a opakování UPDATE
+- `restoreRows` a `insert`: každá kombinace `key` musí ve vybraných datech určit nejvýše jeden řádek a nesmí obsahovat NULL. Duplicity mimo `match` nevadí. Při Capture s `allRows` se kontroluje celá tabulka.
+- `backupTable`, `update` a `delete`: podmínka smí vybrat více řádků. `null` a `""` znamenají `IS NULL`.
 
-Při Capture se u `restoreRows` a `insert` kontroluje unikátnost jen v rozsahu `match`; s `allRows` v celé tabulce. Duplicity a NULL mimo výběr nic neblokují. Při obnově se kontrolují pouze zachycené identity, nikoli nesouvisející řádky po refreshi. `backupTable`, `update` a `delete` unikátnost nevyžadují.
+Sloupce `key` nesmějí být v `columns` ani `set`. Filtry podporují rovnost, nikoli vlastní SQL, LIKE nebo rozsahy. Hodnoty jsou řetězce, čísla nebo `null`; například příznak zapisuj jako `0`/`1`, ne `false`/`true`. Názvy tabulek a sloupců se převádějí na velká písmena; quoted identifiers se nepodporují.
 
-UPDATE uloží po refreshi do plánu hodnoty sloupců `key` i jejich násobnost. Jedna kombinace může představovat několik řádků: všechny dostanou stejné hodnoty `set`. Při opakování a validaci se ověřuje původní počet řádků každé skupiny, ne požadavek jednoho řádku. Změna počtu vyvolá chybu a při transakci rollback. Nejde o uživatelský limit `expectedRows`, ale o kontrolu neměnnosti naplánované skupiny. Řádky uvnitř skupiny se nerozlišují; výměnu řádku za jiný se stejnými hodnotami `key` a stejným počtem nelze odhalit. Zápisy aplikací proto musí zůstat zastavené.
+### Přehled operací
 
-Sloupce `key` UPDATE nesmí měnit v `set`. Více UPDATE může pracovat se stejnou tabulkou a stejným seznamem `key`, pokud jejich vybrané skupiny nekolidují. DELETE s `match` vždy smaže všechny aktuálně odpovídající řádky; nulový počet je platný.
+| Operace | Co dělá | `key` s `match` | `key` s `allRows` |
+| --- | --- | --- | --- |
+| `backupTable` | Pouze záloha; nic automaticky neobnovuje. | Povinný | Bez `key` |
+| `restoreRows` | Vrátí původní hodnoty zadaných `columns`. | Povinný | Povinný |
+| `replaceTable` | Nahradí celý obsah tabulky. | Nepodporuje | Bez `key` |
+| `insert` | Doplní chybějící zachycené řádky. | Povinný | Povinný |
+| `update` | Nastaví hodnoty ze `set` všem vybraným řádkům. | Povinný | Povinný |
+| `delete` | Smaže všechny vybrané řádky. | Povinný | Bez `key` |
 
-### Přechod ze staré konfigurace
+## 4. Příklady konfigurace
 
-Odstraňte všechna početní omezení. Nahraďte `keyValues` polem pojmenovaných objektů `match`, například `"match": [{"ID": 101}]`. Původní objekt `match` zabalte do pole a zajistěte, že obsahuje přesně sloupce explicitního klíče. U UPDATE/DELETE/zálohy může být filtr neunikátní. U `restoreRows` a `insert` musí identifikovat nejvýše jeden řádek pro každou kombinaci. Pro celé tabulky přidejte `"allRows": true`.
+Každý příklad je samostatný obsah souboru schématu. Názvy tabulek, sloupců a hodnoty nahraď vlastními.
 
-Nový formát vyžaduje nový Capture před refreshem. Staré snapshoty se neobnovují novou verzí.
+### backupTable — pouze záloha
 
-## Vzorové konfigurace operací
+Vytvoří CSV a INSERT SQL. Preflight, Restore a Validate tuto tabulku přeskočí.
 
-Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Názvy a hodnoty přizpůsobte databázi. Kroky pro různé tabulky můžete spojit do jednoho pole `steps`.
-
-### 1. Pouze záloha celé tabulky
+**Celá tabulka**
 
 ```json
 {
@@ -127,31 +109,29 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
 }
 ```
 
-### 2. Záloha všech řádků odpovídajících podmínce
+**Vybrané skupiny řádků**
 
 ```json
 {
   "steps": [
     {
       "type": "backupTable",
-      "table": "AUDIT_LOG",
-      "key": [
-        "CONFIGTYPE"
-      ],
+      "table": "CONFIG_TEST",
+      "key": ["CONFIGTYPE"],
       "match": [
-        {
-          "CONFIGTYPE": "POA_CONFIG"
-        },
-        {
-          "CONFIGTYPE": "BMI"
-        }
+        {"CONFIGTYPE": "POA_CONFIG"},
+        {"CONFIGTYPE": "BMI"}
       ]
     }
   ]
 }
 ```
 
-### 3. Obnova sloupců konkrétních řádků
+### restoreRows — původní hodnoty sloupců
+
+Výběr proběhne při Capture. Restore vrátí každému řádku jeho původní hodnoty podle `key`. Nové řádky ponechá; chybějící přeskočí s upozorněním.
+
+**Vybrané řádky**
 
 ```json
 {
@@ -159,27 +139,18 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "restoreRows",
       "table": "CONFIG",
-      "key": [
-        "CONFIG_KEY"
-      ],
+      "key": ["CONFIG_KEY"],
       "match": [
-        {
-          "CONFIG_KEY": "API_URL"
-        },
-        {
-          "CONFIG_KEY": "CALLBACK_URL"
-        }
+        {"CONFIG_KEY": "API_URL"},
+        {"CONFIG_KEY": "CALLBACK_URL"}
       ],
-      "columns": [
-        "CONFIG_VALUE",
-        "DESCRIPTION"
-      ]
+      "columns": ["CONFIG_VALUE", "DESCRIPTION"]
     }
   ]
 }
 ```
 
-### 4. Obnova sloupců všech původních řádků
+**Všechny původní řádky**
 
 ```json
 {
@@ -187,20 +158,15 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "restoreRows",
       "table": "CONFIG",
-      "key": [
-        "CONFIG_KEY"
-      ],
+      "key": ["CONFIG_KEY"],
       "allRows": true,
-      "columns": [
-        "CONFIG_VALUE",
-        "DESCRIPTION"
-      ]
+      "columns": ["CONFIG_VALUE", "DESCRIPTION"]
     }
   ]
 }
 ```
 
-### 5. Obnova podle složeného klíče
+**Složený klíč**
 
 ```json
 {
@@ -208,30 +174,22 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "restoreRows",
       "table": "TENANT_CONFIG",
-      "key": [
-        "TENANT_ID",
-        "CONFIG_KEY"
-      ],
+      "key": ["TENANT_ID", "CONFIG_KEY"],
       "match": [
-        {
-          "TENANT_ID": 10,
-          "CONFIG_KEY": "API_URL"
-        },
-        {
-          "TENANT_ID": 20,
-          "CONFIG_KEY": "API_URL"
-        }
+        {"TENANT_ID": 10, "CONFIG_KEY": "API_URL"},
+        {"TENANT_ID": 20, "CONFIG_KEY": "API_URL"}
       ],
-      "columns": [
-        "CONFIG_VALUE",
-        "DESCRIPTION"
-      ]
+      "columns": ["CONFIG_VALUE", "DESCRIPTION"]
     }
   ]
 }
 ```
 
-### 6. Nahrazení celého obsahu tabulky
+### replaceTable — celý obsah
+
+Při Restore nejprve smaže všechny tabulky `replaceTable` v opačném pořadí konfigurace, i když nejsou propojené. Potom vkládá data v pořadí konfigurace. U navázaných tabulek uveď rodiče před potomkem.
+
+**Jedna tabulka**
 
 ```json
 {
@@ -245,7 +203,7 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
 }
 ```
 
-### 7. Nahrazení navázaných tabulek
+**Navázané tabulky**
 
 ```json
 {
@@ -264,7 +222,11 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
 }
 ```
 
-### 8. Doplnění konkrétních zachycených řádků
+### insert — doplnění řádků
+
+Capture uloží celé vybrané řádky. Restore chybějící vloží, shodné existující přeskočí. Stejný klíč s jinými hodnotami znamená konflikt; další řádky zůstanou.
+
+**Vybrané řádky**
 
 ```json
 {
@@ -272,23 +234,17 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "insert",
       "table": "CONFIG",
-      "key": [
-        "CONFIG_KEY"
-      ],
+      "key": ["CONFIG_KEY"],
       "match": [
-        {
-          "CONFIG_KEY": "API_URL"
-        },
-        {
-          "CONFIG_KEY": "CALLBACK_URL"
-        }
+        {"CONFIG_KEY": "API_URL"},
+        {"CONFIG_KEY": "CALLBACK_URL"}
       ]
     }
   ]
 }
 ```
 
-### 9. Doplnění všech původních řádků
+**Všechny původní řádky**
 
 ```json
 {
@@ -296,16 +252,18 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "insert",
       "table": "TEST_USERS",
-      "key": [
-        "USER_ID"
-      ],
+      "key": ["USER_ID"],
       "allRows": true
     }
   ]
 }
 ```
 
-### 10. Nastavení hodnot konkrétnímu řádku
+### update — pevné hodnoty
+
+Výběr proběhne po refreshi. Všechny vybrané řádky dostanou stejné hodnoty `set`. Jedna podmínka může vybrat více řádků.
+
+**Konkrétní podmínka**
 
 ```json
 {
@@ -313,24 +271,17 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "update",
       "table": "CONFIG",
-      "key": [
-        "CONFIG_KEY"
-      ],
+      "key": ["CONFIG_KEY"],
       "match": [
-        {
-          "CONFIG_KEY": "API_URL"
-        }
+        {"CONFIG_KEY": "API_URL"}
       ],
-      "set": {
-        "CONFIG_VALUE": "https://api-test.example.cz",
-        "DESCRIPTION": "Testovací API"
-      }
+      "set": {"CONFIG_VALUE": "https://api-test.example.cz", "DESCRIPTION": "Testovací API"}
     }
   ]
 }
 ```
 
-### 11. Stejné hodnoty více řádkům podle prostředí
+**Více řádků se stejnou podmínkou**
 
 ```json
 {
@@ -338,26 +289,18 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "update",
       "table": "INTEGRATIONS",
-      "key": [
-        "ENVIRONMENT"
-      ],
+      "key": ["ENVIRONMENT"],
       "match": [
-        {
-          "ENVIRONMENT": "PROD"
-        },
-        {
-          "ENVIRONMENT": "STAGING"
-        }
+        {"ENVIRONMENT": "PROD"},
+        {"ENVIRONMENT": "STAGING"}
       ],
-      "set": {
-        "ENABLED": 0
-      }
+      "set": {"ENABLED": 0}
     }
   ]
 }
 ```
 
-### 12. Nastavení hodnot všem řádkům
+**Všechny řádky**
 
 ```json
 {
@@ -365,20 +308,19 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "update",
       "table": "NOTIFICATION_SETTINGS",
-      "key": [
-        "ID"
-      ],
+      "key": ["ID"],
       "allRows": true,
-      "set": {
-        "ENABLED": 0,
-        "RECIPIENT_EMAIL": null
-      }
+      "set": {"ENABLED": 0, "RECIPIENT_EMAIL": null}
     }
   ]
 }
 ```
 
-### 13. Smazání všech řádků odpovídajících podmínce
+### delete — smazání řádků
+
+Maže až po refreshi. Každý běh odstraní všechny aktuálně odpovídající řádky. S `allRows` smaže celý aktuální obsah, včetně řádků přidaných od minulého běhu.
+
+**Vybrané skupiny řádků**
 
 ```json
 {
@@ -386,23 +328,17 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
     {
       "type": "delete",
       "table": "TEMP_MESSAGES",
-      "key": [
-        "SOURCE", "STATUS"
-      ],
+      "key": ["SOURCE", "STATUS"],
       "match": [
-        {
-          "SOURCE": "PROD", "STATUS": "PENDING"
-        },
-        {
-          "SOURCE": "PROD", "STATUS": "ERROR"
-        }
+        {"SOURCE": "PROD", "STATUS": "PENDING"},
+        {"SOURCE": "PROD", "STATUS": "ERROR"}
       ]
     }
   ]
 }
 ```
 
-### 14. Smazání všech řádků
+**Celá tabulka**
 
 ```json
 {
@@ -416,99 +352,94 @@ Každý následující blok je samostatný obsah `config/schemas/APP1.json`. Ná
 }
 ```
 
-## Provozní postup
+## 5. Spusť Capture a obnovu
 
-### Automatický log každého běhu
+**Zastav zápisy aplikací do dotčených tabulek a nech je zastavené až do dokončení validace.** Capture není jeden společný databázový snapshot všech dotazů.
 
-Capture, Preflight, Restore i Validate automaticky vytvářejí vlastní UTF-8 log v adresáři `logs/` v kořeni projektu. Funguje to při spuštění skriptem i tlačítkem v UI; není potřeba měnit JSON ani ručně použít **Save log**. Cesta se vypíše jako `LOG FILE: ...`.
+### Přes okno aplikace
 
-Název obsahuje UTC čas, jedinečné ID a operaci, například `logs/20260925T1230000000000Z-<id>-restore.log`. Soubory se nepřepisují, automaticky nemažou a jsou ignorované Gitem.
-
-Log začíná před načtením konfigurace a zaznamenává:
-
-- začátek operace, připojovací cíl, schémata a použitý snapshot;
-- jednotlivé kroky Capture a Preflight, počty načtených řádků;
-- začátek a konec každého volání SQL*Plus, délku volání, návratový stav a kódy Oracle chyb;
-- varování, plán obnovy, zahájení transakcí a potvrzené COMMIT jednotlivých schémat;
-- následnou validaci, cesty k recovery výstupům a konečný stav `SUCCESS` nebo `FAILED` s fází chyby a celkovou dobou.
-
-Každý záznam má UTC čas a úroveň `INFO`, `WARNING` nebo `ERROR` a průběžně se zapisuje na disk. Chyba konfigurace či snapshotu se tak zachová také. Pokud nelze log založit, operace nezačne pracovat s databází. Při násilném ukončení procesu může chybět závěrečný `RUN END`; již zapsané události zůstanou. Chyba validace po Restore je výslovně označena jako nastalá **po potvrzení transakcí**.
-
-Hesla, celé SQL příkazy a hodnoty databázových řádků se do provozního logu nezapisují. Podrobnosti chybějících řádků zůstávají v samostatných recovery souborech. Tlačítko **Save log** nadále ukládá viditelný výpis UI; automatický log navíc obsahuje technické události SQL*Plus.
-
-### Database Refresh Utility
-
-Při **Restore** se chybějící řádky typu `restoreRows` zapisují samostatně do složky `recovery/<čas-běhu>-<id>/` vedle `snapshot.json`. Každé schéma má soubor `<schema>.skipped-updates.json` s tabulkou, klíčem a původními obnovovanými hodnotami. Záznamy odpovídají UPDATE, které při daném běhu skutečně nezasáhly žádný řádek; nejde jen o výsledek Preflight.
-
-Pokud existují přeskočené řádky, aplikace je dohledá v plné CSV záloze, ověří její SHA-256 a vytvoří `<schema>.missing-rows.insert.sql`. Soubor obsahuje celé původní řádky včetně sloupců mimo `columns` a vloží je pouze tehdy, pokud jejich klíč stále chybí. Skript se automaticky nespouští ani neprovádí COMMIT. Před ručním spuštěním v SQL*Plus pod odpovídajícím schématem zkontrolujte hodnoty a pořadí tabulek podle cizích klíčů; výsledek potvrďte příkazem COMMIT nebo zrušte příkazem ROLLBACK. Kontrola přihlášeného účtu je součástí skriptu. Identity sloupce vyžadují ruční přípravu INSERT; při chybě generování zůstává samostatný log zachovaný a aplikace oznámí, že obnova schématu již byla potvrzena.
-
-Tento výstup platí pro `restoreRows` s `match` i `allRows`. Operace `update` vybírá řádky až po refreshi, takže nemá seznam původních chybějících řádků pro dodatečné vložení.
-
-Na Windows serveru s grafickým prostředím spusťte z kořene projektu:
+Z kořene projektu spusť `DatabaseRefreshUtility.bat`, nebo:
 
 ```powershell
-powershell.exe -NoProfile -STA -File .\scripts\Start-OracleRefreshUI.ps1
+powershell.exe -NoProfile -STA -File .\scripts\Start-DatabaseRefreshUtilityUI.ps1
 ```
 
-Okno **Database Refresh Utility** má anglické rozhraní a nabízí **Capture**, **Preflight**, **Restore** a **Validate**, výběr `snapshot.json` a průběžný výpis hlášek. Po úspěšném sběru automaticky vybere nový snapshot. Výpis lze uložit do textového souboru. Používají se stejné konfigurace a stejná logika jako ve spouštěcích skriptech; Obnova zahrnuje preflight i následnou validaci.
+1. Před refreshem klikni na **Capture** a počkej na `CAPTURE SUCCESS`.
+2. Uchovej celý vytvořený adresář `snapshots/<čas>/`. UI automaticky vybere nový `snapshot.json`.
+3. Nech DBA provést refresh.
+4. Spusť **Preflight**. Po úspěchu spusť **Restore**.
+5. Restore zopakuje Preflight, provede obnovu a následnou validaci. **Validate** lze spustit i samostatně.
 
-Operace běží v samostatném PowerShell runspace, takže okno zůstává ovladatelné. Během práce nejde spustit další operaci ani zavřít okno; po dokončení se tlačítka znovu zpřístupní. UI neprovádí DBA refresh. Jde o lokální Windows Forms okno bez webového serveru a bez instalace dalších modulů. Na Server Core nebo bez interaktivní plochy používejte příkazy níže.
+Preflight pouze kontroluje databázi; neprovádí zkušební zápisy. Některé chyby, například porušení CHECK constraintu, se proto mohou projevit až při Restore.
 
-### Spuštění skripty
-
-1. Zastavte zápisy aplikací do konfigurovaných tabulek. Ponechte je zastavené po dobu capture, refresh, restore a validace.
-2. Před refreshem spusťte `./scripts/Capture.ps1`. Pokračujte až po `CAPTURE SUCCESS` a uchovejte celý adresář snapshotu mimo databázi.
-3. DBA provede refresh.
-4. Spusťte `./scripts/Preflight.ps1 -Snapshot './snapshots/<timestamp>/snapshot.json'`.
-5. Po `PREFLIGHT SUCCESS` spusťte `./scripts/Restore.ps1 -Snapshot './snapshots/<timestamp>/snapshot.json'`. Restore zopakuje preflight, provede obnovu a wrapper spustí samostatnou validaci.
-6. Validaci lze zopakovat pomocí `./scripts/Validate.ps1 -Snapshot '...'`.
-
-Preflight pouze čte databázi a nevytváří plán obnovy na disku. Kontroluje připojení, účet, strukturu sloupců včetně délek, přesnosti, škály, NULL a identity atributů, existenci a jednoznačnost obnovovaných klíčů, pevně zadávané hodnoty, triggery a závislosti náhrad celých tabulek. Není zkušebním provedením DML: například CHECK constraints se mohou projevit až během transakce, která pak provede rollback.
-
-## Transakce, pořadí a selhání
-
-Všechna schémata projdou preflightem před prvním zápisem. Pak běží postupně podle `schemaOrder`, každé v **jediné vlastní transakci**:
-
-1. Zamknou se konfigurované tabulky daného schématu pomocí `LOCK TABLE ... IN EXCLUSIVE MODE NOWAIT`. Obsazený zámek způsobí chybu.
-2. Tabulky `replaceTable` se vymažou v opačném pořadí kroků, tedy děti před rodiči.
-3. Kroky se provedou v uvedeném pořadí, včetně INSERT rodičů před dětmi.
-4. V téže transakci se zkontrolují výsledné hodnoty a počty. Teprve potom proběhne jeden COMMIT.
-
-**TRUNCATE se nepoužívá.** Chyba DML nebo vnitřní validace vrátí změny aktuálního schématu. Dříve dokončená schémata zůstanou potvrzená a pozdější se nespustí. Nejde o jednu transakci přes všechna schémata. Při ztrátě spojení právě během COMMIT může být výsledek nejistý; ověřte jej validací nebo obnovu zopakujte se stejným plánem.
-
-Pro příchozí aktivní FK k nahrazované tabulce musí být i dětská tabulka mezi `replaceTable` ve stejném schématu a za rodičem. Viditelné vazby z jiných schémat, cykly, samoodkazy a nenahrazované závislé tabulky preflight odmítá. Neviditelné externí vazby automaticky ověřit nemůže. Tyto případy vyžadují samostatný postup DBA; nástroj automaticky nevypíná constraints. Identity a neviditelné sloupce v `replaceTable` se odmítají. Virtuální sloupce se nevkládají a UPDATE nesmí měnit virtuální ani identity sloupce.
-
-
-## Opakování a plán UPDATE
-
-Před prvním zápisem restore atomicky uloží `restore-plan.json` vedle snapshotu. Obsahuje klíče řádků vybraných **po refreshi**, vazbu na snapshot a cíl a kontrolní součet. Při opakování se používají tyto původní klíče, také při celotabulkovém výběru `allRows`. Správně funguje i přiřazení stejné hodnoty, například `STATUS = 'TEST'` tam, kde už TEST je. Sloupce z `match` jsou nyní klíče a UPDATE je nesmí měnit.
-
-Po odstranění příčiny chyby spusťte stejný Restore znovu. Dokončená schémata se znovu aplikují; stav se neodhaduje jen podle uloženého příznaku úspěchu. Plán ani snapshot nemažte nebo ručně neupravujte. Pokud chybí plán, samostatná validace UPDATE skončí chybou. Nový DBA refresh vyžaduje nový capture a nový adresář snapshotu. Pro jeden snapshot nespouštějte více obnov souběžně.
-
-Plán je po prvním uložení neměnný. Restore drží výhradní souborový zámek `restore-plan.json.lock`, takže druhý proces nad stejným snapshotem skončí před prací. Prázdný lock soubor může zůstat na disku; rozhodující je aktivní zámek operačního systému, který se při ukončení procesu uvolní.
-
-Pokud wrapper oznámí chybu až při samostatné validaci po restore, transakce obnovy již byly potvrzené a tato následná kontrola je nevrátí.
-
-## Zálohy a datové typy
-
-Capture pro každou konfigurovanou tabulku uloží všechny podporované viditelné nevirtuální sloupce do CSV a ručního INSERT SQL. Kroky `insert` a `backupTable` exportují pouze vybrané řádky (`match`), nebo celou tabulku (`allRows`). Ostatní kroky vytvářejí úplnou zálohu tabulky; `restoreRows` navíc ukládá vybrané hodnoty pro automatickou obnovu. CSV obsahuje příznaky `__IS_NULL`. INSERT soubory se automaticky nespouštějí a neobsahují COMMIT. Jsou určeny pro předem vyprázdněný cíl nebo odstraněné řádky; jejich ruční použití vyžaduje kontrolu identity, FK, triggerů a struktury cíle. Automatická obnova kroku `insert` používá data ze snapshotu a vlastní transakční SQL.
-
-Před `CAPTURE SUCCESS` se snapshot i exporty znovu načtou a porovnají se zachycenými hodnotami a kontrolními součty. Kontrola textu INSERT není důkazem jeho proveditelnosti v libovolném schématu. SHA-256 chrání před náhodnou změnou, nikoli před úmyslným přepsáním dat i součtu. Jednotlivé capture dotazy netvoří společný konzistentní SCN; proto jsou zastavené zápisy nutné.
-
-Podporované typy: CHAR, VARCHAR2, NCHAR, NVARCHAR2, NUMBER, DATE, TIMESTAMP a TIMESTAMP WITH TIME ZONE. NUMBER se ukládá jako text, aby se neztratila přesnost. DATE očekává `YYYY-MM-DD HH24:MI:SS`, TIMESTAMP přidává devět desetinných míst a časová zóna offset `+HH:MM`. U časové zóny se zachovává offset, nikoli název regionu. Nepodporované typy, například CLOB/BLOB/RAW a TIMESTAMP WITH LOCAL TIME ZONE, nebo příliš velký JSON řádek způsobí chybu capture. SQL*Plus komunikuje v UTF-8; víceřádkové řetězce se převádějí na bezpečné výrazy s CHR/NCHR.
-
-PowerShell vytváří **snapshoty verze 5** pro nový formát konfigurace. Snapshoty verzí 1/2/3/4 a jejich restore plány se odmítají. Při přechodu upravte konfiguraci a proveďte nový Capture **před** refreshem. Pokud refresh už proběhl a máte jen starý snapshot, dokončete obnovu původní verzí nástroje; snapshot ručně nepřevádějte.
-
-Soubory `.ps1` jsou uložené jako UTF-8 s BOM kvůli Windows PowerShellu 5.1. JSON a SQL exporty používají UTF-8 bez BOM, CSV UTF-8 s BOM. Přenos do SQL*Plus používá explicitní UTF-8 bajty přes .NET proces, současně se čtou stdout i stderr a hlídá se `timeoutSeconds`. Není závislý na kódové stránce konzole. Velká přesná čísla v konfiguraci zapište jako JSON řetězce; NUMBER načtený z Oracle se vždy uchovává jako text.
-
-Credentials, lokální konfigurace, snapshoty a plány obsahují citlivé údaje a jsou ignorovány Gitem. Hesla jdou SQL*Plus přes stdin, nikoli argumenty procesu; nevypisují se ani hodnoty řádků z chybového SQL.
-
-## Testy
+### Přes skripty
 
 ```powershell
-powershell.exe -NoProfile -File .\tests\Test-OracleRefresh.ps1
-powershell.exe -NoProfile -STA -File .\tests\Test-OracleRefreshUI.ps1
-powershell.exe -NoProfile -File .\tests\Test-OracleIntegration.ps1
+# Před refreshem:
+powershell.exe -NoProfile -File .\scripts\Capture.ps1
+
+# Po refreshi od DBA; <cas> nahraď skutečnou složkou:
+powershell.exe -NoProfile -File .\scripts\Preflight.ps1 -Snapshot ".\snapshots\<cas>\snapshot.json"
+powershell.exe -NoProfile -File .\scripts\Restore.ps1 -Snapshot ".\snapshots\<cas>\snapshot.json"
+
+# Volitelná opakovaná kontrola:
+powershell.exe -NoProfile -File .\scripts\Validate.ps1 -Snapshot ".\snapshots\<cas>\snapshot.json"
 ```
 
-Lokální regresní testy běží přímo v PowerShellu 5.1 bez Oracle i bez Pesteru. Ověřují také skutečný přenos UTF-8 do pomocného procesu a timeout. Skutečné integrační testy jsou explicitně volitelné a bez konfigurace se zobrazí jako přeskočené; podrobnosti a oprávnění jsou v [tests/README.md](tests/README.md).
+## 6. Kde najdeš výsledky a logy
+
+| Umístění | Obsah |
+| --- | --- |
+| `snapshots/<čas>/snapshot.json` | Data pro automatickou obnovu. Uchovej celý adresář snapshotu. |
+| `snapshots/<čas>/<SCHÉMA>/` | CSV a ruční INSERT SQL pro každou tabulku. |
+| `logs/<čas>-<id>-<operace>.log` | Automatický log běhu, přes UI i skripty. |
+| `restore-plan.json` vedle snapshotu | Plán opakování; nemaž ho ani neupravuj. |
+| `recovery/` vedle snapshotu | Přeskočené řádky `restoreRows` a případný SQL pro jejich ruční doplnění. |
+
+Log běží od načtení konfigurace po výsledek. Obsahuje UTC časy, kroky, počty řádků, volání SQL*Plus, varování, chyby, potvrzení transakcí a konečný `SUCCESS`/`FAILED`. Cesta se vypíše jako `LOG FILE`. Logy se průběžně zapisují, nepřepisují a automaticky nemažou. Při násilném ukončení může chybět závěrečný záznam. Pokud nelze log založit, práce s databází nezačne.
+
+Hesla, hodnoty řádků a celé SQL příkazy se do provozního logu nezapisují. Zálohy a recovery soubory však obsahují databázová data. Chraň je spolu s konfigurací. **Save log** v UI navíc uloží viditelný výpis okna.
+
+`backupTable` a `insert` exportují jen zvolený výběr. Ostatní operace při Capture zálohují celou tabulku. CSV zachovává NULL pomocí sloupců `__IS_NULL`. Snapshot a exporty se před úspěšným dokončením kontrolují pomocí kontrolních součtů.
+
+Ruční SQL exporty se automaticky nespouštějí a neobsahují COMMIT. Před použitím ověř cílová data, strukturu a vazby; běžný export předpokládá, že v cíli vkládané řádky nejsou. Recovery SQL vkládá jen stále chybějící klíče. Pokud má tabulka identity sloupce, může být nutná ruční příprava INSERT. Chyba tvorby recovery souboru nevrací již potvrzenou obnovu.
+
+## 7. Co je důležité při obnově
+
+- Každé schéma má vlastní transakci a COMMIT. Chyba vrátí změny aktuálního schématu, ale dříve dokončená schémata zůstávají potvrzená. Chyba následné samostatné validace už COMMIT nevrátí.
+- Tabulky se během obnovy zamykají. Obsazený zámek způsobí chybu; TRUNCATE se nepoužívá.
+- Po opravě příčiny lze Restore zopakovat se stejným snapshotem a plánem. Při ztrátě spojení během COMMIT ověř stav validací. Nespouštěj více obnov stejného snapshotu současně.
+- UPDATE ukládá vybrané hodnoty `key` a počet řádků každé skupiny. Opakování vyžaduje stejné počty a ověřuje všechny nastavené hodnoty. Výměnu řádků za jiné se stejným klíčem a počtem nepozná. Samostatná validace UPDATE potřebuje uložený plán.
+- `backupTable`, `restoreRows`, `replaceTable` a `insert` musí být jediným krokem pro danou tabulku. Více UPDATE/DELETE je možné, ale UPDATE musí mít stejný seznam `key` a nesmějí se překrývat. DELETE nesmí zasáhnout řádky potřebné pro validaci UPDATE.
+- Aktivní triggery musí vyřešit DBA. Nástroj nevypíná triggery ani constraints. U `replaceTable` musí být závislé děti také nahrazované a uvedené za rodičem; cykly a samoodkazy se odmítají.
+- Prostředí nesmí mít příchozí cizí klíče mezi schématy. Účet nemusí všechny takové vazby vidět. Kontroly používají `ALL_CONSTRAINTS` a `USER_CONSTRAINTS`, nevyžadují `SYS.DBA_CONSTRAINTS`.
+- Připojení určuje cíl. Nástroj ověřuje účet, ale nezávisle neověřuje identitu databáze. Změnu cíle skrytou pod stejným TNS aliasem nerozpozná.
+
+## 8. Datové typy a řešení chyb
+
+Podporované typy: `CHAR`, `VARCHAR2`, `NCHAR`, `NVARCHAR2`, `NUMBER`, `DATE`, `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`. Například `CLOB`, `BLOB`, `RAW`, `TIMESTAMP WITH LOCAL TIME ZONE` a příliš velké exportované řádky nejsou podporované. I sloupec mimo `columns` může Capture zablokovat, protože záloha obsahuje celé řádky.
+
+`insert` a `replaceTable` nepodporují identity ani neviditelné sloupce. Virtuální sloupce se nevkládají. UPDATE nesmí měnit identity ani virtuální sloupce.
+
+Datum zapisuj jako `2026-09-25 14:30:00`, timestamp jako `2026-09-25 14:30:00.123456789`, časovou zónu přidej jako ` +02:00`. Zachovává se offset, ne název regionu. Velká přesná čísla v JSON zapisuj jako řetězce, aby se neztratila přesnost. Konfigurace a exporty používají UTF-8.
+
+| Problém | Co ověřit |
+| --- | --- |
+| `ORA-12154` | TNS alias musí fungovat v klientovi z `sqlplusPath`; zkontroluj `tnsnames.ora` a `TNS_ADMIN`. |
+| `selected keys must be unique and non-null` | U `restoreRows`/`insert` zkontroluj duplicity a NULL ve vybraných klíčích. S `allRows` v celé tabulce. |
+| `UPDATE group count changed` | Od vytvoření plánu se změnil počet řádků některé skupiny. Prověř data a souběžné zápisy; plán ručně neupravuj. |
+| `layout changed` | Struktura tabulky po refreshi nesouhlasí se snapshotem. |
+| Chybí řádek při `restoreRows` | Obnova jej přeskočí; podrobnosti najdeš v `recovery/`. |
+
+## 9. Starší konfigurace a testy
+
+Aktuální snapshot má **verzi 5**. Verze 1–4 se odmítají. Při přechodu vytvoř nový Capture **před refreshem**. Pokud refresh již proběhl, starou zálohu dokonči původní verzí nástroje; snapshot nepřeváděj ručně. Nový refresh vždy vyžaduje nový Capture. Změna připojení nebo kroků také vyžaduje nový Capture; změna hesla ne.
+
+Staré `keyValues` nahraď polem objektů `match`. Odstraň `maxRows`, `backupMaxRows`, `maxInsertRows`, `maxDeleteRows` a `expectedRows`. Pro celou tabulku přidej `allRows: true`. Starý `credentials.json` se nečte: účty patří do `database.json`, `tnsAlias` se jmenuje `host`. `expectedTarget`, `dbUniqueName` a `conName` se nenastavují.
+
+Testy a požadavky pro testovací Oracle schéma popisuje [tests/README.md](tests/README.md).
+
+```powershell
+powershell.exe -NoProfile -File .\tests\Test-DatabaseRefreshUtility.ps1
+powershell.exe -NoProfile -STA -File .\tests\Test-DatabaseRefreshUtilityUI.ps1
+```

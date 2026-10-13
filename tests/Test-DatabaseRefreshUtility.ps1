@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 param()
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot/../scripts/OracleRefresh.ps1"
+. "$PSScriptRoot/../scripts/DatabaseRefreshUtility.ps1"
 $script:TestCount = 0; $script:TestFailures = @()
 $script:TestRoot = Join-Path ([IO.Path]::GetTempPath()) ('orf-ps-tests-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($script:TestRoot)
@@ -638,7 +638,7 @@ try {
         . "$PSScriptRoot/../scripts/UiSupport.ps1"
         $c=New-TestConfig @(@{type='backupTable';table='T';allRows=$true})
         [void][IO.Directory]::CreateDirectory((Join-Path $c.Root 'scripts'))
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../scripts/OracleRefresh.ps1') -Destination (Join-Path $c.Root 'scripts/OracleRefresh.ps1')
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../scripts/DatabaseRefreshUtility.ps1') -Destination (Join-Path $c.Root 'scripts/DatabaseRefreshUtility.ps1')
         $job=Start-OrfUiJob $c.Root 'validate' ''
         $watch=[Diagnostics.Stopwatch]::StartNew()
         do {

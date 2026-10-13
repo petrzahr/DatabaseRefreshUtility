@@ -30,7 +30,7 @@ function Invoke-OrfAction($Action,$Snapshot,$ProjectRoot) {
     } else { Write-Host 'PREFLIGHT SUCCESS' }
 }
 '@
-    [IO.File]::WriteAllText((Join-Path $root 'scripts/OracleRefresh.ps1'),$fake)
+    [IO.File]::WriteAllText((Join-Path $root 'scripts/DatabaseRefreshUtility.ps1'),$fake)
     $running=Start-OrfUiJob $root 'capture' ''
     Assert-Ui (-not $running.Handle.IsCompleted) 'Worker did not run asynchronously'
     $result=Wait-UiJob $running; $running=$null
@@ -48,7 +48,7 @@ function Invoke-OrfAction($Action,$Snapshot,$ProjectRoot) {
     $result=Wait-UiJob $running; $running=$null
     Assert-Ui (-not $result.Update.Success) 'Missing snapshot was accepted'; $passed++
     # Create real Windows Forms controls without showing a window or touching Oracle.
-    $ui=. "$PSScriptRoot/../scripts/Start-OracleRefreshUI.ps1" -NoShow -ProjectRoot $root
+    $ui=. "$PSScriptRoot/../scripts/Start-DatabaseRefreshUtilityUI.ps1" -NoShow -ProjectRoot $root
     Assert-Ui ($ui.Buttons.Count -eq 4) 'Expected four operation buttons'
     $ui.Form.CreateControl(); $ui.Form.PerformLayout()
     $clickMethod=$ui.Buttons.capture.GetType().GetMethod('OnClick',[Reflection.BindingFlags]'Instance,NonPublic')

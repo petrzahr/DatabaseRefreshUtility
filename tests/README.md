@@ -5,8 +5,8 @@
 Z kořene projektu spusťte:
 
 ```powershell
-powershell.exe -NoProfile -File .\tests\Test-OracleRefresh.ps1
-powershell.exe -NoProfile -STA -File .\tests\Test-OracleRefreshUI.ps1
+powershell.exe -NoProfile -File .\tests\Test-DatabaseRefreshUtility.ps1
+powershell.exe -NoProfile -STA -File .\tests\Test-DatabaseRefreshUtilityUI.ps1
 ```
 
 Používá se Windows PowerShell 5.1 a vestavěný .NET Framework, bez Pythonu, Pesteru nebo dodatečných modulů. Lokální testy pokrývají načítání příkladů, zachování JSON polí/NULL/řetězců, povinnou konfiguraci, SQL*Plus transport a kontrolu účtu, bezpečné literály, validaci UPDATE přes klíče, explicitní klíče, match/allRows a odmítnutí odstraněných limitů, FK pořadí, read-only preflight, capture všech typů kroků a opakování po simulované chybě. Přenos UTF-8 a současné čtení stdout/stderr se ověřují skutečným pomocným procesem PowerShellu; samostatný test vyvolá timeout. Databázové odpovědi jsou v lokálních testech simulované, takže neprokazují chování skutečného Oracle.
