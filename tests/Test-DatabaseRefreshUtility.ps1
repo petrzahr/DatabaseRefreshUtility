@@ -364,6 +364,21 @@ try {
         try { $null = Invoke-OrfSqlPlus $c.Database $c.Schemas[0] ''; throw 'Expected SQL error' }
         catch { Assert-True ($_.Exception.Message.Contains('ORA-20010')); Assert-True ($_.Exception.Message -notmatch 'secret|private') }
     }
+    Test-Case 'Wide-table capture keeps SQLPlus input lines short' {
+        function Invoke-OrfProcess($Executable,$Arguments,$InputText,$TimeoutSeconds) {
+            foreach ($line in ($InputText -split '\r?\n')) {
+                Assert-True ($script:OrfUtf8.GetByteCount($line) -lt 3000) 'SQLPlus input line exceeds limit'
+            }
+            Assert-True ($InputText.Contains("'COLUMN_150' VALUE COLUMN_150"))
+            Assert-True ($InputText.Contains("FROM ACAPPINFO`nWHERE BRANCHID = ('130')"))
+            return @{ExitCode=0;Output="COUNT|0`n"}
+        }
+        $c = New-TestConfig @(@{type='replaceTable';allRows=$true;table='T'})
+        $types = [ordered]@{BRANCHID='VARCHAR2'}
+        foreach ($i in 1..150) { $types["COLUMN_$i"] = 'VARCHAR2' }
+        $rows = Get-OrfRows $c.Database $c.Schemas[0] 'ACAPPINFO' $types $null "BRANCHID = ('130')"
+        Assert-Equal $rows.Count 0
+    }
     Test-Case 'Row protocol preserves zero and one row arrays and detects truncation' {
         function Invoke-OrfSqlPlus { "ROW|{`"ID`":`"1`",`"V`":null}`nCOUNT|1`n" }
         $rows = Get-OrfRows @{} @{} 'T' ([ordered]@{ID='NUMBER';V='VARCHAR2'})

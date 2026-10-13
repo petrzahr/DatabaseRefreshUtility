@@ -397,12 +397,19 @@ function Get-OrfTypes($Layout) {
 }
 
 function Get-OrfRows($Db, $Account, [string]$Table, $Types, $MaxRows=$null, [string]$Where='') {
+    # SQL*Plus input lines have a separate limit from SET LINESIZE (output).
+    # Keep each column on its own line, including for full backups of wide tables.
     $fields = foreach ($column in $Types.Keys) { "$(Get-OrfQuoted $column) VALUE $(Get-OrfExpression $column $Types[$column])" }
-    $clause = ''; if ($Where) { $clause = " WHERE $Where" }
+    $clause = ''; if ($Where) { $clause = "`nWHERE $Where" }
     $limit = ''; if ($null -ne $MaxRows) { $limit = "IF v_count > $MaxRows THEN RAISE_APPLICATION_ERROR(-20004, 'maxRows exceeded'); END IF;" }
     $sql = @"
 DECLARE v_count NUMBER := 0; v_json VARCHAR2(32767); BEGIN
-FOR r IN (SELECT JSON_OBJECT($($fields -join ', ') NULL ON NULL RETURNING CLOB) AS j FROM $Table$clause) LOOP
+FOR r IN (
+SELECT JSON_OBJECT(
+$($fields -join ",`n")
+NULL ON NULL RETURNING CLOB) AS j
+FROM $Table$clause
+) LOOP
 v_count := v_count + 1;
 $limit
 IF DBMS_LOB.GETLENGTH(r.j) > 32763 THEN RAISE_APPLICATION_ERROR(-20005, 'JSON row too large'); END IF;
